@@ -1208,8 +1208,14 @@ retry:
 		}
 
 		if r.options.Probe {
+			if r.options.OnResult != nil {
+				r.options.OnResult(Result{URL: URL.String(), Input: origInput, Timestamp: time.Now(), err: err, Failed: err != nil, Error: errString, str: builder.String()})
+			}
 			return Result{URL: URL.String(), Input: origInput, Timestamp: time.Now(), err: err, Failed: err != nil, Error: errString, str: builder.String()}
 		} else {
+			if r.options.OnResult != nil {
+				r.options.OnResult(Result{URL: URL.String(), Input: origInput, Timestamp: time.Now(), err: err})
+			}
 			return Result{URL: URL.String(), Input: origInput, Timestamp: time.Now(), err: err}
 		}
 	}
