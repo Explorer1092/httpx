@@ -119,7 +119,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/projectdiscovery/blackrock v0.0.1 // indirect
 	github.com/projectdiscovery/freeport v0.0.5 // indirect
-	github.com/Explorer1092/httpx v1.3.3
+	// github.com/Explorer1092/httpx v1.3.3
 	github.com/projectdiscovery/networkpolicy v0.0.6 // indirect
 	github.com/projectdiscovery/retryabledns v1.0.30 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
