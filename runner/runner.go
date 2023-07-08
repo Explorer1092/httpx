@@ -676,7 +676,12 @@ func (r *Runner) RunEnumeration() {
 			// be careful and check for result.Err
 			if r.options.OnResult != nil {
 				r.options.OnResult(resp)
+				
 			}
+			// if r.options.OnResult != nil {
+			// 	r.options.OnResult(Result{URL: URL.String(), Input: origInput, Timestamp: time.Now(), err: err, Failed: err != nil, Error: errString, str: builder.String()})
+			// }
+
 
 			if resp.Err != nil {
 				// Change the error message if any port value passed explicitly
