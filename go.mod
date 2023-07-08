@@ -1,4 +1,4 @@
-module github.com/Explorer1092/httpx@v1.3.3-dev
+module github.com/Explorer1092/httpx
 
 go 1.19
 
