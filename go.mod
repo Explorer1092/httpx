@@ -4,7 +4,6 @@ go 1.19
 
 require (
 	github.com/akrylysov/pogreb v0.10.1 // indirect
-	github.com/bluele/gcache v0.0.2
 	github.com/corpix/uarand v0.2.0
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/hbakhtiyor/strsim v0.0.0-20190107154042-4d2bbb273edf
@@ -35,6 +34,7 @@ require (
 require github.com/spaolacci/murmur3 v1.1.0
 
 require (
+	github.com/Mzack9999/gcache v0.0.0-20230410081825-519e28eab057
 	github.com/PuerkitoBio/goquery v1.8.1
 	github.com/bxcodec/faker/v4 v4.0.0-beta.3
 	github.com/hdm/jarm-go v0.0.7
@@ -43,6 +43,7 @@ require (
 	github.com/projectdiscovery/asnmap v1.0.4
 	github.com/projectdiscovery/dsl v0.0.12
 	github.com/projectdiscovery/fastdialer v0.0.33
+	github.com/projectdiscovery/httpx v1.3.3
 	github.com/projectdiscovery/ratelimit v0.0.9
 	github.com/projectdiscovery/tlsx v1.1.0
 	github.com/projectdiscovery/utils v0.0.40
@@ -52,7 +53,6 @@ require (
 )
 
 require (
-	github.com/Mzack9999/gcache v0.0.0-20230410081825-519e28eab057 // indirect
 	github.com/Mzack9999/gostruct v0.0.0-20230415193108-30b70932da81 // indirect
 	github.com/andybalholm/brotli v1.0.4 // indirect
 	github.com/cloudflare/cfssl v1.6.4 // indirect
@@ -153,4 +153,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/projectdiscovery/httpx => github.com/Explorer1092/httpx v1.3.3
+// replace github.com/projectdiscovery/httpx => github.com/Explorer1092/httpx v1.3.6
