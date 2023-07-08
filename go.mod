@@ -14,7 +14,7 @@ require (
 	github.com/miekg/dns v1.1.55 // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/projectdiscovery/cdncheck v1.0.9
-	github.com/projectdiscovery/clistats v0.0.18
+	github.com/projectdiscovery/clistats v0.0.19
 	github.com/projectdiscovery/fdmax v0.0.4
 	github.com/projectdiscovery/goconfig v0.0.1
 	github.com/projectdiscovery/goflags v0.1.11
@@ -22,14 +22,14 @@ require (
 	github.com/projectdiscovery/hmap v0.0.13
 	github.com/projectdiscovery/mapcidr v1.1.2
 	github.com/projectdiscovery/rawhttp v0.1.15
-	github.com/projectdiscovery/retryablehttp-go v1.0.17
-	github.com/projectdiscovery/wappalyzergo v0.0.101
+	github.com/projectdiscovery/retryablehttp-go v1.0.18
+	github.com/projectdiscovery/wappalyzergo v0.0.102
 	github.com/remeh/sizedwaitgroup v1.0.0
 	github.com/rs/xid v1.5.0
 	go.etcd.io/bbolt v1.3.7 // indirect
 	golang.org/x/net v0.11.0
 	golang.org/x/sys v0.9.0 // indirect
-	golang.org/x/text v0.10.0
+	golang.org/x/text v0.11.0
 )
 
 require github.com/spaolacci/murmur3 v1.1.0
@@ -41,11 +41,11 @@ require (
 	github.com/mfonda/simhash v0.0.0-20151007195837-79f94a1100d6
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/projectdiscovery/asnmap v1.0.4
-	github.com/projectdiscovery/dsl v0.0.10
-	github.com/projectdiscovery/fastdialer v0.0.31
-	github.com/projectdiscovery/ratelimit v0.0.8
+	github.com/projectdiscovery/dsl v0.0.12
+	github.com/projectdiscovery/fastdialer v0.0.33
+	github.com/projectdiscovery/ratelimit v0.0.9
 	github.com/projectdiscovery/tlsx v1.1.0
-	github.com/projectdiscovery/utils v0.0.40-0.20230627061640-8ec2b35f851c
+	github.com/projectdiscovery/utils v0.0.40
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/multierr v1.11.0
 	golang.org/x/exp v0.0.0-20230420155640-133eef4313cb
@@ -66,7 +66,7 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/refraction-networking/utls v1.3.2 // indirect
-	github.com/sashabaranov/go-openai v1.11.2 // indirect
+	github.com/sashabaranov/go-openai v1.12.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.23.5 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
