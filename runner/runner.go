@@ -1062,7 +1062,7 @@ func (r *Runner) targets(hp *httpx.HTTPX, target string) chan httpx.Target {
 			}
 		case stringsutil.ContainsAny(target, ","):
 			idxComma := strings.Index(target, ",")
-			results <- httpx.Target{Host: target[idxComma+1:], CustomHost: target[:idxComma]}
+			results <- httpx.Target{Host: target[idxComma+1:], CustomIP: target[:idxComma]}
 		default:
 			results <- httpx.Target{Host: target}
 		}
