@@ -4,19 +4,24 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/corpix/uarand"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/projectdiscovery/cdncheck"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
-	"github.com/projectdiscovery/gologger"
+	"github.com/projectdiscovery/fastdialer/fastdialer/ja3/impersonate"
+	"github.com/projectdiscovery/httpx/common/httputilz"
+	"github.com/projectdiscovery/networkpolicy"
 	"github.com/projectdiscovery/rawhttp"
 	retryablehttp "github.com/projectdiscovery/retryablehttp-go"
+	"github.com/projectdiscovery/useragent"
+	"github.com/projectdiscovery/utils/generic"
 	pdhttputil "github.com/projectdiscovery/utils/http"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 	urlutil "github.com/projectdiscovery/utils/url"
@@ -34,15 +39,24 @@ type HTTPX struct {
 	CustomHeaders map[string]string
 	cdn           *cdncheck.Client
 	Dialer        *fastdialer.Dialer
+	NetworkPolicy *networkpolicy.NetworkPolicy
 }
 
 // New httpx instance
 func New(options *Options) (*HTTPX, error) {
 	httpx := &HTTPX{}
 	fastdialerOpts := fastdialer.DefaultOptions
-	fastdialerOpts.EnableFallback = true
-	fastdialerOpts.Deny = options.Deny
-	fastdialerOpts.Allow = options.Allow
+
+	// if the user specified any custom resolver disables system resolvers and syscall lookup fallback
+	if len(options.Resolvers) > 0 {
+		fastdialerOpts.ResolversFile = false
+		fastdialerOpts.EnableFallback = false
+	}
+
+	if options.NetworkPolicy != nil {
+		httpx.NetworkPolicy = options.NetworkPolicy
+		fastdialerOpts.NetworkPolicy = options.NetworkPolicy
+	}
 	fastdialerOpts.WithDialerHistory = true
 	fastdialerOpts.WithZTLS = options.ZTLS
 	if len(options.Resolvers) > 0 {
@@ -63,6 +77,14 @@ func New(options *Options) (*HTTPX, error) {
 	retryablehttpOptions.Timeout = httpx.Options.Timeout
 	retryablehttpOptions.RetryMax = httpx.Options.RetryMax
 
+	handleHSTS := func(req *http.Request) {
+		if req.Response.Header.Get("Strict-Transport-Security") == "" {
+			return
+		}
+
+		req.URL.Scheme = "https"
+	}
+
 	var redirectFunc = func(_ *http.Request, _ []*http.Request) error {
 		// Tell the http client to not follow redirect
 		return http.ErrUseLastResponse
@@ -73,10 +95,16 @@ func New(options *Options) (*HTTPX, error) {
 		redirectFunc = func(redirectedRequest *http.Request, previousRequests []*http.Request) error {
 			// add custom cookies if necessary
 			httpx.setCustomCookies(redirectedRequest)
+
 			if len(previousRequests) >= options.MaxRedirects {
 				// https://github.com/golang/go/issues/10069
 				return http.ErrUseLastResponse
 			}
+
+			if options.RespectHSTS {
+				handleHSTS(redirectedRequest)
+			}
+
 			return nil
 		}
 	}
@@ -88,8 +116,8 @@ func New(options *Options) (*HTTPX, error) {
 			httpx.setCustomCookies(redirectedRequest)
 
 			// Check if we get a redirect to a different host
-			var newHost = redirectedRequest.URL.Host
-			var oldHost = previousRequests[0].Host
+			var newHost = redirectedRequest.URL.Hostname()
+			var oldHost = previousRequests[0].URL.Hostname()
 			if oldHost == "" {
 				oldHost = previousRequests[0].URL.Host
 			}
@@ -101,18 +129,34 @@ func New(options *Options) (*HTTPX, error) {
 				// https://github.com/golang/go/issues/10069
 				return http.ErrUseLastResponse
 			}
+
+			if options.RespectHSTS {
+				handleHSTS(redirectedRequest)
+			}
+
 			return nil
 		}
 	}
 	transport := &http.Transport{
-		DialContext:         httpx.Dialer.Dial,
-		DialTLSContext:      httpx.Dialer.DialTLS,
+		DialContext: httpx.Dialer.Dial,
+		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if options.TlsImpersonate {
+				return httpx.Dialer.DialTLSWithConfigImpersonate(ctx, network, addr, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS10}, impersonate.Random, nil)
+			}
+			return httpx.Dialer.DialTLS(ctx, network, addr)
+		},
 		MaxIdleConnsPerHost: -1,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
 			MinVersion:         tls.VersionTLS10,
 		},
 		DisableKeepAlives: true,
+	}
+
+	if httpx.Options.Protocol == "http11" {
+		// disable http2
+		os.Setenv("GODEBUG", "http2client=0")
+		transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 	}
 
 	if httpx.Options.SniName != "" {
@@ -150,10 +194,12 @@ func New(options *Options) (*HTTPX, error) {
 
 	httpx.htmlPolicy = bluemonday.NewPolicy()
 	httpx.CustomHeaders = httpx.Options.CustomHeaders
-	if options.CdnCheck || options.ExcludeCdn {
-		httpx.cdn, err = cdncheck.NewWithCache()
-		if err != nil {
-			gologger.Error().Msgf("could not create cdn check: %v", err)
+
+	if options.CDNCheckClient != nil {
+		httpx.cdn = options.CDNCheckClient
+	} else {
+		if options.CdnCheck != "false" || options.ExcludeCdn {
+			httpx.cdn = cdncheck.New()
 		}
 	}
 
@@ -179,6 +225,7 @@ get_response:
 	}
 
 	var resp Response
+	resp.Input = req.Host
 
 	resp.Headers = httpresp.Header.Clone()
 
@@ -204,8 +251,10 @@ get_response:
 	resp.Raw = string(rawResp)
 	resp.RawHeaders = string(headers)
 	var respbody []byte
-	// websockets don't have a readable body
-	if httpresp.StatusCode != http.StatusSwitchingProtocols {
+	// body shouldn't be read with the following status codes
+	// 101 - Switching Protocols => websockets don't have a readable body
+	// 304 - Not Modified => no body the response terminates with latest header newline
+	if !generic.EqualsAny(httpresp.StatusCode, http.StatusSwitchingProtocols, http.StatusNotModified) {
 		var err error
 		respbody, err = io.ReadAll(io.LimitReader(httpresp.Body, h.Options.MaxResponseBodySizeToRead))
 		if err != nil && !shouldIgnoreBodyErrors {
@@ -217,6 +266,10 @@ get_response:
 	if closeErr != nil && !shouldIgnoreBodyErrors {
 		return nil, closeErr
 	}
+
+	// Todo: replace with https://github.com/projectdiscovery/utils/issues/110
+	resp.RawData = make([]byte, len(respbody))
+	copy(resp.RawData, respbody)
 
 	respbody, err = DecodeData(respbody, httpresp.Header)
 	if err != nil && !shouldIgnoreBodyErrors {
@@ -248,17 +301,26 @@ get_response:
 
 	// fill metrics
 	resp.StatusCode = httpresp.StatusCode
-	// number of words
-	resp.Words = len(strings.Split(respbodystr, " "))
-	// number of lines
-	resp.Lines = len(strings.Split(respbodystr, "\n"))
-
-	if !h.Options.Unsafe && h.Options.TLSGrab {
-		// extracts TLS data if any
-		resp.TLSData = h.TLSGrab(httpresp)
+	if respbodystr != "" {
+		// number of words
+		resp.Words = len(strings.Split(respbodystr, " "))
+		// number of lines
+		resp.Lines = len(strings.Split(strings.TrimSpace(respbodystr), "\n"))
 	}
 
-	resp.CSPData = h.CSPGrab(&resp)
+	if !h.Options.Unsafe && h.Options.TLSGrab {
+		if h.Options.ZTLS {
+			resp.TLSData = h.ZTLSGrab(httpresp)
+		} else {
+			// extracts TLS data if any
+			resp.TLSData = h.TLSGrab(httpresp)
+		}
+	}
+
+	if h.Options.ExtractFqdn {
+		resp.CSPData = h.CSPGrab(&resp)
+		resp.BodyDomains = h.BodyDomainGrab(&resp)
+	}
 
 	// build the redirect flow by reverse cycling the response<-request chain
 	if !h.Options.Unsafe {
@@ -364,7 +426,8 @@ func (h *HTTPX) SetCustomHeaders(r *retryablehttp.Request, headers map[string]st
 		}
 	}
 	if h.Options.RandomAgent {
-		r.Header.Set("User-Agent", uarand.GetRandom()) //nolint
+		userAgent := useragent.PickRandom()
+		r.Header.Set("User-Agent", userAgent.Raw) //nolint
 	}
 }
 
@@ -374,4 +437,15 @@ func (httpx *HTTPX) setCustomCookies(req *http.Request) {
 			req.AddCookie(cookie)
 		}
 	}
+}
+
+func (httpx *HTTPX) Sanitize(respStr string, trimLine, normalizeSpaces bool) string {
+	respStr = httpx.htmlPolicy.Sanitize(respStr)
+	if trimLine {
+		respStr = strings.Replace(respStr, "\n", "", -1)
+	}
+	if normalizeSpaces {
+		respStr = httputilz.NormalizeSpaces(respStr)
+	}
+	return respStr
 }
