@@ -76,6 +76,14 @@ func New(options *Options) (*HTTPX, error) {
 	var retryablehttpOptions = retryablehttp.DefaultOptionsSpraying
 	retryablehttpOptions.Timeout = httpx.Options.Timeout
 	retryablehttpOptions.RetryMax = httpx.Options.RetryMax
+	retryablehttpOptions.Trace = options.Trace
+	handleHSTS := func(req *http.Request) {
+		if req.Response.Header.Get("Strict-Transport-Security") == "" {
+			return
+		}
+
+		req.URL.Scheme = "https"
+	}
 
 	handleHSTS := func(req *http.Request) {
 		if req.Response.Header.Get("Strict-Transport-Security") == "" {

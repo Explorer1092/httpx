@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ import (
 	"github.com/projectdiscovery/httpx/common/httpx"
 	"github.com/projectdiscovery/httpx/common/stringz"
 	"github.com/projectdiscovery/networkpolicy"
-	"github.com/projectdiscovery/utils/auth/pdcp"
+	pdcpauth "github.com/projectdiscovery/utils/auth/pdcp"
 	"github.com/projectdiscovery/utils/env"
 	fileutil "github.com/projectdiscovery/utils/file"
 	sliceutil "github.com/projectdiscovery/utils/slice"
@@ -41,7 +42,10 @@ const (
 	DefaultOutputDirectory = "output"
 )
 
-var PDCPApiKey = ""
+var (
+	PDCPApiKey = ""
+	TeamIDEnv  = env.GetEnvOrDefault("PDCP_TEAM_ID", "")
+)
 
 // OnResultCallback (hostResult)
 type OnResultCallback func(Result)
@@ -100,7 +104,8 @@ type ScanOptions struct {
 	DisableStdin              bool
 	NoScreenshotBytes         bool
 	NoHeadlessBody            bool
-	ScreenshotTimeout         int
+	ScreenshotTimeout         time.Duration
+	ScreenshotIdle            time.Duration
 }
 
 func (s *ScanOptions) Clone() *ScanOptions {
@@ -154,6 +159,7 @@ func (s *ScanOptions) Clone() *ScanOptions {
 		NoScreenshotBytes:         s.NoScreenshotBytes,
 		NoHeadlessBody:            s.NoHeadlessBody,
 		ScreenshotTimeout:         s.ScreenshotTimeout,
+		ScreenshotIdle:            s.ScreenshotIdle,
 	}
 }
 
@@ -181,6 +187,7 @@ type Options struct {
 	OutputMatchContentLength  string
 	OutputFilterStatusCode    string
 	OutputFilterErrorPage     bool
+	FilterOutDuplicates       bool
 	OutputFilterContentLength string
 	InputRawRequest           string
 	rawRequest                string
@@ -209,6 +216,7 @@ type Options struct {
 	CSVOutput                 bool
 	CSVOutputEncoding         string
 	PdcpAuth                  string
+	PdcpAuthCredFile          string
 	Silent                    bool
 	Version                   bool
 	Verbose                   bool
@@ -218,7 +226,7 @@ type Options struct {
 	ResponseHeadersInStdout   bool
 	ResponseInStdout          bool
 	Base64ResponseInStdout    bool
-	chainInStdout             bool
+	ChainInStdout             bool
 	FollowHostRedirects       bool
 	MaxRedirects              int
 	OutputMethod              bool
@@ -304,10 +312,27 @@ type Options struct {
 	HttpApiEndpoint    string
 	NoScreenshotBytes  bool
 	NoHeadlessBody     bool
-	ScreenshotTimeout  int
+	ScreenshotTimeout  time.Duration
+	ScreenshotIdle     time.Duration
 	// HeadlessOptionalArguments specifies optional arguments to pass to Chrome
 	HeadlessOptionalArguments goflags.StringSlice
 	Protocol                  string
+	OutputFilterErrorPagePath string
+	DisableStdout             bool
+	// AssetUpload
+	AssetUpload bool
+	// AssetName
+	AssetName string
+	// AssetID
+	AssetID string
+	// AssetFileUpload
+	AssetFileUpload string
+	TeamID          string
+	// OnClose adds a callback function that is invoked when httpx is closed
+	// to be exact at end of existing closures
+	OnClose func()
+
+	Trace bool
 
 	// Optional pre-created objects to reduce allocations
 	Wappalyzer     *wappalyzer.Wappalyze
@@ -360,7 +385,8 @@ func ParseOptions() *Options {
 		flagSet.StringSliceVarP(&options.HeadlessOptionalArguments, "headless-options", "ho", nil, "start headless chrome with additional options", goflags.FileCommaSeparatedStringSliceOptions),
 		flagSet.BoolVarP(&options.NoScreenshotBytes, "exclude-screenshot-bytes", "esb", false, "enable excluding screenshot bytes from json output"),
 		flagSet.BoolVarP(&options.NoHeadlessBody, "exclude-headless-body", "ehb", false, "enable excluding headless header from json output"),
-		flagSet.IntVarP(&options.ScreenshotTimeout, "screenshot-timeout", "st", 10, "set timeout for screenshot in seconds"),
+		flagSet.DurationVarP(&options.ScreenshotTimeout, "screenshot-timeout", "st", 10*time.Second, "set timeout for screenshot in seconds"),
+		flagSet.DurationVarP(&options.ScreenshotIdle, "screenshot-idle", "sid", 1*time.Second, "set idle time before taking screenshot in seconds"),
 	)
 
 	flagSet.CreateGroup("matchers", "Matchers",
@@ -384,6 +410,7 @@ func ParseOptions() *Options {
 	flagSet.CreateGroup("filters", "Filters",
 		flagSet.StringVarP(&options.OutputFilterStatusCode, "filter-code", "fc", "", "filter response with specified status code (-fc 403,401)"),
 		flagSet.BoolVarP(&options.OutputFilterErrorPage, "filter-error-page", "fep", false, "filter response with ML based error page detection"),
+		flagSet.BoolVarP(&options.FilterOutDuplicates, "filter-duplicates", "fd", false, "filter out near-duplicate responses (only first response is retained)"),
 		flagSet.StringVarP(&options.OutputFilterContentLength, "filter-length", "fl", "", "filter response with specified content length (-fl 23,33)"),
 		flagSet.StringVarP(&options.OutputFilterLinesCount, "filter-line-count", "flc", "", "filter response body with specified line count (-flc 423,532)"),
 		flagSet.StringVarP(&options.OutputFilterWordsCount, "filter-word-count", "fwc", "", "filter response body with specified word count (-fwc 423,532)"),
@@ -432,15 +459,15 @@ func ParseOptions() *Options {
 		flagSet.BoolVarP(&options.ResponseHeadersInStdout, "include-response-header", "irh", false, "include http response (headers) in JSON output (-json only)"),
 		flagSet.BoolVarP(&options.ResponseInStdout, "include-response", "irr", false, "include http request/response (headers + body) in JSON output (-json only)"),
 		flagSet.BoolVarP(&options.Base64ResponseInStdout, "include-response-base64", "irrb", false, "include base64 encoded http request/response in JSON output (-json only)"),
-		flagSet.BoolVar(&options.chainInStdout, "include-chain", false, "include redirect http chain in JSON output (-json only)"),
+		flagSet.BoolVar(&options.ChainInStdout, "include-chain", false, "include redirect http chain in JSON output (-json only)"),
 		flagSet.BoolVar(&options.StoreChain, "store-chain", false, "include http redirect chain in responses (-sr only)"),
 		flagSet.BoolVarP(&options.StoreVisionReconClusters, "store-vision-recon-cluster", "svrc", false, "include visual recon clusters (-ss and -sr only)"),
 		flagSet.StringVarP(&options.Protocol, "protocol", "pr", "", "protocol to use (unknown, http11)"),
+		flagSet.StringVarP(&options.OutputFilterErrorPagePath, "filter-error-page-path", "fepp", "filtered_error_page.json", "path to store filtered error pages"),
 	)
 
 	flagSet.CreateGroup("configs", "Configurations",
 		flagSet.StringVar(&cfgFile, "config", "", "path to the httpx configuration file (default $HOME/.config/httpx/config.yaml)"),
-		flagSet.DynamicVar(&options.PdcpAuth, "auth", "true", "configure projectdiscovery cloud (pdcp) api key"),
 		flagSet.StringSliceVarP(&options.Resolvers, "resolvers", "r", nil, "list of custom resolver (file or comma separated)", goflags.NormalizedStringSliceOptions),
 		flagSet.Var(&options.Allow, "allow", "allowed list of IP/CIDR's to process (file or comma separated)"),
 		flagSet.Var(&options.Deny, "deny", "denied list of IP/CIDR's to process (file or comma separated)"),
@@ -479,6 +506,7 @@ func ParseOptions() *Options {
 		flagSet.BoolVarP(&options.Verbose, "verbose", "v", false, "verbose mode"),
 		flagSet.IntVarP(&options.StatsInterval, "stats-interval", "si", 0, "number of seconds to wait between showing a statistics update (default: 5)"),
 		flagSet.BoolVarP(&options.NoColor, "no-color", "nc", false, "disable colors in cli output"),
+		flagSet.BoolVarP(&options.Trace, "trace", "tr", false, "trace"),
 	)
 
 	flagSet.CreateGroup("Optimizations", "Optimizations",
@@ -491,6 +519,16 @@ func ParseOptions() *Options {
 		flagSet.DurationVar(&options.Delay, "delay", -1, "duration between each http request (eg: 200ms, 1s)"),
 		flagSet.IntVarP(&options.MaxResponseBodySizeToSave, "response-size-to-save", "rsts", math.MaxInt32, "max response size to save in bytes"),
 		flagSet.IntVarP(&options.MaxResponseBodySizeToRead, "response-size-to-read", "rstr", math.MaxInt32, "max response size to read in bytes"),
+	)
+
+	flagSet.CreateGroup("cloud", "Cloud",
+		flagSet.DynamicVar(&options.PdcpAuth, "auth", "true", "configure projectdiscovery cloud (pdcp) api key"),
+		flagSet.StringVarP(&options.PdcpAuthCredFile, "auth-config", "ac", "", "configure projectdiscovery cloud (pdcp) api key credential file"),
+		flagSet.BoolVarP(&options.AssetUpload, "dashboard", "pd", false, "upload / view output in projectdiscovery cloud (pdcp) UI dashboard"),
+		flagSet.StringVarP(&options.TeamID, "team-id", "tid", TeamIDEnv, "upload asset results to given team id (optional)"),
+		flagSet.StringVarP(&options.AssetID, "asset-id", "aid", "", "upload new assets to existing asset id (optional)"),
+		flagSet.StringVarP(&options.AssetName, "asset-name", "aname", "", "assets group name to set (optional)"),
+		flagSet.StringVarP(&options.AssetFileUpload, "dashboard-upload", "pdu", "", "upload httpx output file (jsonl) in projectdiscovery cloud (pdcp) UI dashboard"),
 	)
 
 	_ = flagSet.Parse()
@@ -514,14 +552,19 @@ func ParseOptions() *Options {
 		}
 	}
 
+	if options.PdcpAuthCredFile != "" {
+		pdcpauth.PDCPCredFile = options.PdcpAuthCredFile
+		pdcpauth.PDCPDir = filepath.Dir(pdcpauth.PDCPCredFile)
+	}
+
 	// api key hierarchy: cli flag > env var > .pdcp/credential file
 	if options.PdcpAuth == "true" {
 		AuthWithPDCP()
 	} else if len(options.PdcpAuth) == 36 {
 		PDCPApiKey = options.PdcpAuth
-		ph := pdcp.PDCPCredHandler{}
-		if _, err := ph.GetCreds(); err == pdcp.ErrNoCreds {
-			apiServer := env.GetEnvOrDefault("PDCP_API_SERVER", pdcp.DefaultApiServer)
+		ph := pdcpauth.PDCPCredHandler{}
+		if _, err := ph.GetCreds(); err == pdcpauth.ErrNoCreds {
+			apiServer := env.GetEnvOrDefault("PDCP_API_SERVER", pdcpauth.DefaultApiServer)
 			if validatedCreds, err := ph.ValidateAPIKey(PDCPApiKey, apiServer, "httpx"); err == nil {
 				_ = ph.SaveCreds(validatedCreds)
 			}
@@ -561,18 +604,18 @@ func ParseOptions() *Options {
 	showBanner()
 
 	if options.Version {
-		gologger.Info().Msgf("Current Version: %s\n", version)
+		gologger.Info().Msgf("Current Version: %s\n", Version)
 		os.Exit(0)
 	}
 
 	if !options.DisableUpdateCheck {
-		latestVersion, err := updateutils.GetToolVersionCallback("httpx", version)()
+		latestVersion, err := updateutils.GetToolVersionCallback("httpx", Version)()
 		if err != nil {
 			if options.Verbose {
 				gologger.Error().Msgf("httpx version check failed: %v", err.Error())
 			}
 		} else {
-			gologger.Info().Msgf("Current httpx version %v %v", version, updateutils.GetVersionDescription(version, latestVersion))
+			gologger.Info().Msgf("Current httpx version %v %v", Version, updateutils.GetVersionDescription(Version, latestVersion))
 		}
 	}
 
@@ -604,7 +647,7 @@ func (options *Options) ValidateOptions() error {
 				msg += fmt.Sprintf("%s flag is", last)
 			}
 			msg += " incompatible with silent flag"
-			return fmt.Errorf(msg)
+			return errors.New(msg)
 		}
 	}
 

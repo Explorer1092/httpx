@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -98,11 +99,21 @@ func NewBrowser(proxy string, useLocal bool, optionalArgs map[string]string) (*B
 	return engine, nil
 }
 
-func (b *Browser) ScreenshotWithBody(url string, timeout time.Duration) ([]byte, string, error) {
+func (b *Browser) ScreenshotWithBody(url string, timeout time.Duration, idle time.Duration, headers []string) ([]byte, string, error) {
 	page, err := b.engine.Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return nil, "", err
 	}
+	for _, header := range headers {
+		headerParts := strings.SplitN(header, ":", 2)
+		if len(headerParts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(headerParts[0])
+		value := strings.TrimSpace(headerParts[1])
+		_, _ = page.SetExtraHeaders([]string{key, value})
+	}
+
 	page = page.Timeout(timeout)
 	defer page.Close()
 
@@ -115,7 +126,7 @@ func (b *Browser) ScreenshotWithBody(url string, timeout time.Duration) ([]byte,
 	if err := page.WaitLoad(); err != nil {
 		return nil, "", err
 	}
-	_ = page.WaitIdle(1 * time.Second)
+	_ = page.WaitIdle(idle)
 
 	screenshot, err := page.Screenshot(true, &proto.PageCaptureScreenshot{})
 	if err != nil {

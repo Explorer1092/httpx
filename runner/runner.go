@@ -29,11 +29,12 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/corona10/goimagehash"
+	"github.com/mfonda/simhash"
 	asnmap "github.com/projectdiscovery/asnmap/libs"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
 	"github.com/projectdiscovery/httpx/common/customextract"
-	"github.com/projectdiscovery/httpx/common/errorpageclassifier"
 	"github.com/projectdiscovery/httpx/common/hashes/jarm"
+	"github.com/projectdiscovery/httpx/common/pagetypeclassifier"
 	"github.com/projectdiscovery/httpx/static"
 	"github.com/projectdiscovery/mapcidr/asn"
 	"github.com/projectdiscovery/networkpolicy"
@@ -65,6 +66,7 @@ import (
 	"github.com/projectdiscovery/httpx/common/stringz"
 	"github.com/projectdiscovery/mapcidr"
 	"github.com/projectdiscovery/rawhttp"
+	converstionutil "github.com/projectdiscovery/utils/conversion"
 	fileutil "github.com/projectdiscovery/utils/file"
 	pdhttputil "github.com/projectdiscovery/utils/http"
 	iputil "github.com/projectdiscovery/utils/ip"
@@ -74,19 +76,20 @@ import (
 
 // Runner is a client for running the enumeration process.
 type Runner struct {
-	options             *Options
-	hp                  *httpx.HTTPX
-	wappalyzer          *wappalyzer.Wappalyze
-	scanopts            ScanOptions
-	hm                  *hybrid.HybridMap
-	excludeCdn          bool
-	stats               clistats.StatisticsClient
-	ratelimiter         ratelimit.Limiter
-	HostErrorsCache     gcache.Cache[string, int]
-	browser             *Browser
-	errorPageClassifier *errorpageclassifier.ErrorPageClassifier
-	pHashClusters       []pHashCluster
-	httpApiEndpoint     *Server
+	options            *Options
+	hp                 *httpx.HTTPX
+	wappalyzer         *wappalyzer.Wappalyze
+	scanopts           ScanOptions
+	hm                 *hybrid.HybridMap
+	excludeCdn         bool
+	stats              clistats.StatisticsClient
+	ratelimiter        ratelimit.Limiter
+	HostErrorsCache    gcache.Cache[string, int]
+	browser            *Browser
+	pageTypeClassifier *pagetypeclassifier.PageTypeClassifier // Include this for general page classification
+	pHashClusters      []pHashCluster
+	simHashes          gcache.Cache[uint64, struct{}] // Include simHashes for efficient duplicate detection
+	httpApiEndpoint    *Server
 }
 
 func (r *Runner) HTTPX() *httpx.HTTPX {
@@ -113,7 +116,7 @@ func New(options *Options) (*Runner, error) {
 	var err error
 	if options.Wappalyzer != nil {
 		runner.wappalyzer = options.Wappalyzer
-	} else if options.TechDetect || options.JSONOutput || options.CSVOutput {
+	} else if options.TechDetect || options.JSONOutput || options.CSVOutput || options.AssetUpload {
 		runner.wappalyzer, err = wappalyzer.New()
 	}
 	if err != nil {
@@ -126,6 +129,7 @@ func New(options *Options) (*Runner, error) {
 	}
 
 	httpxOptions := httpx.DefaultOptions
+	httpxOptions.Trace = options.Trace
 
 	var np *networkpolicy.NetworkPolicy
 	if options.Networkpolicy != nil {
@@ -251,7 +255,7 @@ func New(options *Options) (*Runner, error) {
 	scanopts.OutputWithNoColor = options.NoColor
 	scanopts.ResponseInStdout = options.ResponseInStdout
 	scanopts.Base64ResponseInStdout = options.Base64ResponseInStdout
-	scanopts.ChainInStdout = options.chainInStdout
+	scanopts.ChainInStdout = options.ChainInStdout
 	scanopts.OutputWebSocket = options.OutputWebSocket
 	scanopts.TLSProbe = options.TLSProbe
 	scanopts.CSPProbe = options.CSPProbe
@@ -271,7 +275,7 @@ func New(options *Options) (*Runner, error) {
 	scanopts.OutputResponseTime = options.OutputResponseTime
 	scanopts.NoFallback = options.NoFallback
 	scanopts.NoFallbackScheme = options.NoFallbackScheme
-	scanopts.TechDetect = options.TechDetect || options.JSONOutput || options.CSVOutput
+	scanopts.TechDetect = options.TechDetect || options.JSONOutput || options.CSVOutput || options.AssetUpload
 	scanopts.StoreChain = options.StoreChain
 	scanopts.StoreVisionReconClusters = options.StoreVisionReconClusters
 	scanopts.MaxResponseBodySizeToSave = options.MaxResponseBodySizeToSave
@@ -357,7 +361,8 @@ func New(options *Options) (*Runner, error) {
 		runner.HostErrorsCache = gc
 	}
 
-	runner.errorPageClassifier = errorpageclassifier.New()
+	runner.simHashes = gcache.New[uint64, struct{}](1000).ARC().Build()
+	runner.pageTypeClassifier = pagetypeclassifier.New()
 
 	if options.HttpApiEndpoint != "" {
 		apiServer := NewServer(options.HttpApiEndpoint, options)
@@ -437,7 +442,7 @@ func (r *Runner) prepareInput() {
 	// check if input target host(s) have been provided
 	if len(r.options.InputTargetHost) > 0 {
 		for _, target := range r.options.InputTargetHost {
-			expandedTarget := r.countTargetFromRawTarget(target)
+			expandedTarget, _ := r.countTargetFromRawTarget(target)
 			if expandedTarget > 0 {
 				numHosts += expandedTarget
 				r.hm.Set(target, nil) //nolint
@@ -479,6 +484,11 @@ func (r *Runner) prepareInput() {
 		numHosts += numTargetsStdin
 	}
 
+	// Adjust total hosts based on the number of paths
+	if len(r.options.requestURIs) > 0 {
+		numHosts *= len(r.options.requestURIs)
+	}
+
 	if r.options.ShowStatistics {
 		r.stats.AddStatic("totalHosts", numHosts)
 		r.stats.AddCounter("hosts", 0)
@@ -506,6 +516,24 @@ func (r *Runner) setSeen(k string) {
 func (r *Runner) seen(k string) bool {
 	_, ok := r.hm.Get(k)
 	return ok
+}
+
+func (r *Runner) duplicate(result *Result) bool {
+	respSimHash := simhash.Simhash(simhash.NewWordFeatureSet(converstionutil.Bytes(result.Raw)))
+	if r.simHashes.Has(respSimHash) {
+		gologger.Debug().Msgf("Skipping duplicate response with simhash %d for URL %s\n", respSimHash, result.URL)
+		return true
+	}
+
+	for simHash := range r.simHashes.GetALL(false) {
+		// lower threshold for increased precision
+		if simhash.Compare(simHash, respSimHash) <= 3 {
+			gologger.Debug().Msgf("Skipping near-duplicate response with simhash %d for URL %s\n", respSimHash, result.URL)
+			return true
+		}
+	}
+	_ = r.simHashes.Set(respSimHash, struct{}{})
+	return false
 }
 
 func (r *Runner) testAndSet(k string) bool {
@@ -575,7 +603,7 @@ func (r *Runner) loadAndCloseFile(finput *os.File) (numTargets int, err error) {
 	for scanner.Scan() {
 		target := strings.TrimSpace(scanner.Text())
 		// Used just to get the exact number of targets
-		expandedTarget := r.countTargetFromRawTarget(target)
+		expandedTarget, _ := r.countTargetFromRawTarget(target)
 		if expandedTarget > 0 {
 			numTargets += expandedTarget
 			r.hm.Set(target, nil) //nolint
@@ -585,12 +613,12 @@ func (r *Runner) loadAndCloseFile(finput *os.File) (numTargets int, err error) {
 	return numTargets, err
 }
 
-func (r *Runner) countTargetFromRawTarget(rawTarget string) (numTargets int) {
+func (r *Runner) countTargetFromRawTarget(rawTarget string) (numTargets int, err error) {
 	if rawTarget == "" {
-		return 0
+		return 0, nil
 	}
 	if _, ok := r.hm.Get(rawTarget); ok {
-		return 0
+		return 0, nil
 	}
 
 	expandedTarget := 0
@@ -600,14 +628,17 @@ func (r *Runner) countTargetFromRawTarget(rawTarget string) (numTargets int) {
 			expandedTarget = int(ipsCount)
 		}
 	case asn.IsASN(rawTarget):
-		cidrs, _ := asn.GetCIDRsForASNNum(rawTarget)
+		cidrs, err := asn.GetCIDRsForASNNum(rawTarget)
+		if err != nil {
+			return 0, err
+		}
 		for _, cidr := range cidrs {
 			expandedTarget += int(mapcidr.AddressCountIpnet(cidr))
 		}
 	default:
 		expandedTarget = 1
 	}
-	return expandedTarget
+	return expandedTarget, nil
 }
 
 var (
@@ -671,6 +702,15 @@ func (r *Runner) Close() {
 	}
 	if r.options.Screenshot {
 		r.browser.Close()
+	}
+	if r.options.ShowStatistics {
+		_ = r.stats.Stop()
+	}
+	if r.options.HttpApiEndpoint != "" {
+		_ = r.httpApiEndpoint.Stop()
+	}
+	if r.options.OnClose != nil {
+		r.options.OnClose()
 	}
 }
 
@@ -838,7 +878,7 @@ func (r *Runner) RunEnumeration() {
 				continue
 			}
 
-			if indexFile != nil {
+			if indexFile != nil && resp.Err == nil {
 				indexData := fmt.Sprintf("%s %s (%d %s)\n", resp.StoredResponsePath, resp.URL, resp.StatusCode, http.StatusText(resp.StatusCode))
 				_, _ = indexFile.WriteString(indexData)
 			}
@@ -865,9 +905,14 @@ func (r *Runner) RunEnumeration() {
 			}
 
 			if r.options.OutputFilterErrorPage && resp.KnowledgeBase["PageType"] == "error" {
-				logFilteredErrorPage(resp.URL)
+				logFilteredErrorPage(r.options.OutputFilterErrorPagePath, resp.URL)
 				continue
 			}
+
+			if r.options.FilterOutDuplicates && r.duplicate(&resp) {
+				continue
+			}
+
 			if len(r.options.filterStatusCode) > 0 && sliceutil.Contains(r.options.filterStatusCode, resp.StatusCode) {
 				continue
 			}
@@ -892,10 +937,10 @@ func (r *Runner) RunEnumeration() {
 					continue
 				}
 			}
-			if len(r.options.OutputFilterString) > 0 && stringsutil.EqualFoldAny(resp.Raw, r.options.OutputFilterString...) {
+			if len(r.options.OutputFilterString) > 0 && stringsutil.ContainsAnyI(resp.Raw, r.options.OutputFilterString...) {
 				continue
 			}
-			if len(r.options.OutputFilterFavicon) > 0 && stringsutil.EqualFoldAny(resp.FavIconMMH3, r.options.OutputFilterFavicon...) {
+			if len(r.options.OutputFilterFavicon) > 0 && stringsutil.ContainsAnyI(resp.FavIconMMH3, r.options.OutputFilterFavicon...) {
 				continue
 			}
 			if len(r.options.matchStatusCode) > 0 && !sliceutil.Contains(r.options.matchStatusCode, resp.StatusCode) {
@@ -935,75 +980,6 @@ func (r *Runner) RunEnumeration() {
 				continue
 			}
 
-			// call the callback function if any
-			// be careful and check for result.Err
-			if r.options.OnResult != nil {
-				r.options.OnResult(resp)
-			}
-
-			// store responses or chain in directory
-			URL, _ := urlutil.Parse(resp.URL)
-			domainFile := resp.Method + ":" + URL.EscapedString()
-			hash := hashes.Sha1([]byte(domainFile))
-			domainResponseFile := fmt.Sprintf("%s.txt", hash)
-			screenshotResponseFile := fmt.Sprintf("%s.png", hash)
-			hostFilename := strings.ReplaceAll(URL.Host, ":", "_")
-			domainResponseBaseDir := filepath.Join(r.options.StoreResponseDir, "response")
-			domainScreenshotBaseDir := filepath.Join(r.options.StoreResponseDir, "screenshot")
-			responseBaseDir := filepath.Join(domainResponseBaseDir, hostFilename)
-			screenshotBaseDir := filepath.Join(domainScreenshotBaseDir, hostFilename)
-
-			var responsePath, screenshotPath, screenshotPathRel string
-			// store response
-			if r.scanopts.StoreResponse || r.scanopts.StoreChain {
-				if r.scanopts.OmitBody {
-					resp.Raw = strings.Replace(resp.Raw, resp.ResponseBody, "", -1)
-				}
-
-				responsePath = fileutilz.AbsPathOrDefault(filepath.Join(responseBaseDir, domainResponseFile))
-				// URL.EscapedString returns that can be used as filename
-				respRaw := resp.Raw
-				reqRaw := resp.RequestRaw
-				if len(respRaw) > r.scanopts.MaxResponseBodySizeToSave {
-					respRaw = respRaw[:r.scanopts.MaxResponseBodySizeToSave]
-				}
-				data := reqRaw
-				if r.options.StoreChain && resp.Response.HasChain() {
-					data = append(data, append([]byte("\n"), []byte(resp.Response.GetChain())...)...)
-				}
-				data = append(data, respRaw...)
-				data = append(data, []byte("\n\n\n")...)
-				data = append(data, []byte(resp.URL)...)
-				_ = fileutil.CreateFolder(responseBaseDir)
-				writeErr := os.WriteFile(responsePath, data, 0644)
-				if writeErr != nil {
-					gologger.Error().Msgf("Could not write response at path '%s', to disk: %s", responsePath, writeErr)
-				}
-				resp.StoredResponsePath = responsePath
-			}
-
-			if r.scanopts.Screenshot {
-				screenshotPath = fileutilz.AbsPathOrDefault(filepath.Join(screenshotBaseDir, screenshotResponseFile))
-				screenshotPathRel = filepath.Join(hostFilename, screenshotResponseFile)
-				_ = fileutil.CreateFolder(screenshotBaseDir)
-				err := os.WriteFile(screenshotPath, resp.ScreenshotBytes, 0644)
-				if err != nil {
-					gologger.Error().Msgf("Could not write screenshot at path '%s', to disk: %s", screenshotPath, err)
-				}
-
-				resp.ScreenshotPath = screenshotPath
-				resp.ScreenshotPathRel = screenshotPathRel
-			}
-
-			if indexFile != nil {
-				indexData := fmt.Sprintf("%s %s (%d %s)\n", resp.StoredResponsePath, resp.URL, resp.StatusCode, http.StatusText(resp.StatusCode))
-				_, _ = indexFile.WriteString(indexData)
-			}
-			if indexScreenshotFile != nil && resp.ScreenshotPathRel != "" {
-				indexData := fmt.Sprintf("%s %s (%d %s)\n", resp.ScreenshotPathRel, resp.URL, resp.StatusCode, http.StatusText(resp.StatusCode))
-				_, _ = indexScreenshotFile.WriteString(indexData)
-			}
-
 			if r.options.OutputMatchResponseTime != "" {
 				filterOps := FilterOperator{flag: "-mrt, -match-response-time"}
 				operator, value, err := filterOps.Parse(r.options.OutputMatchResponseTime)
@@ -1034,6 +1010,7 @@ func (r *Runner) RunEnumeration() {
 					}
 				}
 			}
+
 			if r.options.OutputFilterResponseTime != "" {
 				filterOps := FilterOperator{flag: "-frt, -filter-response-time"}
 				operator, value, err := filterOps.Parse(r.options.OutputFilterResponseTime)
@@ -1069,6 +1046,80 @@ func (r *Runner) RunEnumeration() {
 				}
 			}
 
+			if !r.options.DisableStdout && (!jsonOrCsv || jsonAndCsv || r.options.OutputAll) {
+				gologger.Silent().Msgf("%s\n", resp.str)
+			}
+
+			if resp.Err != nil {
+				continue
+			}
+
+			// store responses or chain in directory
+			URL, _ := urlutil.Parse(resp.URL)
+			domainFile := resp.Method + ":" + URL.EscapedString()
+			hash := hashes.Sha1([]byte(domainFile))
+			domainResponseFile := fmt.Sprintf("%s.txt", hash)
+			screenshotResponseFile := fmt.Sprintf("%s.png", hash)
+			hostFilename := strings.ReplaceAll(URL.Host, ":", "_")
+			domainResponseBaseDir := filepath.Join(r.options.StoreResponseDir, "response")
+			domainScreenshotBaseDir := filepath.Join(r.options.StoreResponseDir, "screenshot")
+			responseBaseDir := filepath.Join(domainResponseBaseDir, hostFilename)
+			screenshotBaseDir := filepath.Join(domainScreenshotBaseDir, hostFilename)
+
+			var responsePath, screenshotPath, screenshotPathRel string
+			// store response
+			if r.scanopts.StoreResponse || r.scanopts.StoreChain {
+				if r.scanopts.OmitBody {
+					resp.Raw = strings.Replace(resp.Raw, resp.ResponseBody, "", -1)
+				}
+
+				responsePath = fileutilz.AbsPathOrDefault(filepath.Join(responseBaseDir, domainResponseFile))
+				// URL.EscapedString returns that can be used as filename
+				respRaw := resp.Raw
+				reqRaw := resp.RequestRaw
+				if len(respRaw) > r.scanopts.MaxResponseBodySizeToSave {
+					respRaw = respRaw[:r.scanopts.MaxResponseBodySizeToSave]
+				}
+				data := reqRaw
+				if r.options.StoreChain && resp.Response != nil && resp.Response.HasChain() {
+					data = append(data, append([]byte("\n"), []byte(resp.Response.GetChain())...)...)
+				}
+				data = append(data, respRaw...)
+				data = append(data, []byte("\n\n\n")...)
+				data = append(data, []byte(resp.URL)...)
+				_ = fileutil.CreateFolder(responseBaseDir)
+				writeErr := os.WriteFile(responsePath, data, 0644)
+				if writeErr != nil {
+					gologger.Error().Msgf("Could not write response at path '%s', to disk: %s", responsePath, writeErr)
+				}
+				resp.StoredResponsePath = responsePath
+			}
+
+			if r.scanopts.Screenshot {
+				screenshotPath = fileutilz.AbsPathOrDefault(filepath.Join(screenshotBaseDir, screenshotResponseFile))
+				screenshotPathRel = filepath.Join(hostFilename, screenshotResponseFile)
+				_ = fileutil.CreateFolder(screenshotBaseDir)
+				err := os.WriteFile(screenshotPath, resp.ScreenshotBytes, 0644)
+				if err != nil {
+					gologger.Error().Msgf("Could not write screenshot at path '%s', to disk: %s", screenshotPath, err)
+				}
+
+				resp.ScreenshotPath = screenshotPath
+				resp.ScreenshotPathRel = screenshotPathRel
+				if r.scanopts.NoScreenshotBytes {
+					resp.ScreenshotBytes = []byte{}
+				}
+			}
+
+			if indexFile != nil {
+				indexData := fmt.Sprintf("%s %s (%d %s)\n", resp.StoredResponsePath, resp.URL, resp.StatusCode, http.StatusText(resp.StatusCode))
+				_, _ = indexFile.WriteString(indexData)
+			}
+			if indexScreenshotFile != nil && resp.ScreenshotPathRel != "" {
+				indexData := fmt.Sprintf("%s %s (%d %s)\n", resp.ScreenshotPathRel, resp.URL, resp.StatusCode, http.StatusText(resp.StatusCode))
+				_, _ = indexScreenshotFile.WriteString(indexData)
+			}
+
 			if r.scanopts.StoreVisionReconClusters {
 				foundCluster := false
 				pHash, _ := resp.KnowledgeBase["pHash"].(uint64)
@@ -1090,13 +1141,15 @@ func (r *Runner) RunEnumeration() {
 				}
 			}
 
-			if !jsonOrCsv || jsonAndCsv || r.options.OutputAll {
-				gologger.Silent().Msgf("%s\n", resp.str)
-			}
-
 			//nolint:errcheck // this method needs a small refactor to reduce complexity
 			if plainFile != nil {
 				plainFile.WriteString(resp.str + "\n")
+			}
+
+			// call the callback function if any
+			// be careful and check for result.Err
+			if r.options.OnResult != nil {
+				r.options.OnResult(resp)
 			}
 
 			if r.options.JSONOutput {
@@ -1245,9 +1298,17 @@ func (r *Runner) RunEnumeration() {
 	}
 }
 
-func logFilteredErrorPage(url string) {
-	fileName := "filtered_error_page.json"
-	file, err := os.OpenFile(fileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+func logFilteredErrorPage(fileName, url string) {
+	dir := filepath.Dir(fileName)
+	if !fileutil.FolderExists(dir) {
+		err := fileutil.CreateFolder(dir)
+		if err != nil {
+			gologger.Fatal().Msgf("Could not create directory '%s': %s\n", dir, err)
+			return
+		}
+	}
+
+	file, err := fileutil.OpenOrCreateFile(fileName)
 	if err != nil {
 		gologger.Fatal().Msgf("Could not open/create output file '%s': %s\n", fileName, err)
 		return
@@ -1310,7 +1371,7 @@ func (r *Runner) process(t string, wg *syncutil.AdaptiveWaitGroup, hp *httpx.HTT
 		protocols = []string{httpx.HTTPS, httpx.HTTP}
 	}
 
-	for target := range r.targets(hp, stringz.TrimProtocol(t, scanopts.NoFallback || scanopts.NoFallbackScheme)) {
+	for target := range r.targets(hp, t) {
 		// if no custom ports specified then test the default ones
 		if len(customport.Ports) == 0 {
 			for _, method := range scanopts.Methods {
@@ -1496,7 +1557,10 @@ retry:
 	if err := URL.MergePath(scanopts.RequestURI, scanopts.Unsafe); err != nil {
 		gologger.Debug().Msgf("failed to merge paths of url %v and %v", URL.String(), scanopts.RequestURI)
 	}
-	var req *retryablehttp.Request
+	var (
+		req *retryablehttp.Request
+		ctx context.Context
+	)
 	if target.CustomIP != "" {
 		var requestIP string
 		if iputil.IsIPv6(target.CustomIP) {
@@ -1504,11 +1568,11 @@ retry:
 		} else {
 			requestIP = target.CustomIP
 		}
-		ctx := context.WithValue(context.Background(), fastdialer.IP, requestIP)
-		req, err = hp.NewRequestWithContext(ctx, method, URL.String())
+		ctx = context.WithValue(context.Background(), fastdialer.IP, requestIP)
 	} else {
-		req, err = hp.NewRequest(method, URL.String())
+		ctx = context.Background()
 	}
+	req, err = hp.NewRequestWithContext(ctx, method, URL.String())
 	if err != nil {
 		return Result{URL: URL.String(), Input: origInput, Err: err}
 	}
@@ -1948,11 +2012,11 @@ retry:
 		builder.WriteRune(']')
 	}
 
-	var faviconMMH3, faviconPath, faviconURL string
+	var faviconMMH3, faviconMD5, faviconPath, faviconURL string
 	var faviconData []byte
 	if scanopts.Favicon {
 		var err error
-		faviconMMH3, faviconPath, faviconData, faviconURL, err = r.HandleFaviconHash(hp, req, resp.Data, true)
+		faviconMMH3, faviconMD5, faviconPath, faviconData, faviconURL, err = r.HandleFaviconHash(hp, req, resp.Data, true)
 		if err == nil {
 			builder.WriteString(" [")
 			if !scanopts.OutputWithNoColor {
@@ -2117,7 +2181,7 @@ retry:
 	var pHash uint64
 	if scanopts.Screenshot {
 		var err error
-		screenshotBytes, headlessBody, err = r.browser.ScreenshotWithBody(fullURL, time.Duration(scanopts.ScreenshotTimeout)*time.Second)
+		screenshotBytes, headlessBody, err = r.browser.ScreenshotWithBody(fullURL, scanopts.ScreenshotTimeout, scanopts.ScreenshotIdle, r.options.CustomHeaders)
 		if err != nil {
 			gologger.Warning().Msgf("Could not take screenshot '%s': %s", fullURL, err)
 		} else {
@@ -2138,9 +2202,6 @@ retry:
 				technologies = sliceutil.Dedupe(technologies)
 			}
 		}
-		if scanopts.NoScreenshotBytes {
-			screenshotBytes = []byte{}
-		}
 		if scanopts.NoHeadlessBody {
 			headlessBody = ""
 		}
@@ -2149,14 +2210,17 @@ retry:
 	if scanopts.TechDetect && len(technologies) > 0 {
 		sort.Strings(technologies)
 		technologies := strings.Join(technologies, ",")
-
-		builder.WriteString(" [")
-		if !scanopts.OutputWithNoColor {
-			builder.WriteString(aurora.Magenta(technologies).String())
-		} else {
-			builder.WriteString(technologies)
+		// only print to console if tech-detect flag is enabled
+		// scanopts.TechDetect implicitly enabled for json , csv and asset-upload
+		if r.options.TechDetect {
+			builder.WriteString(" [")
+			if !scanopts.OutputWithNoColor {
+				builder.WriteString(aurora.Magenta(technologies).String())
+			} else {
+				builder.WriteString(technologies)
+			}
+			builder.WriteRune(']')
 		}
-		builder.WriteRune(']')
 	}
 
 	result := Result{
@@ -2199,11 +2263,12 @@ retry:
 		Technologies:     technologies,
 		FinalURL:         finalURL,
 		FavIconMMH3:      faviconMMH3,
+		FavIconMD5:       faviconMD5,
 		FaviconPath:      faviconPath,
 		FaviconURL:       faviconURL,
 		Hashes:           hashesMap,
 		Extracts:         extractResult,
-		Jarm:             jarmhash,
+		JarmHash:         jarmhash,
 		Lines:            resp.Lines,
 		Words:            resp.Words,
 		ASN:              asnResponse,
@@ -2211,7 +2276,7 @@ retry:
 		ScreenshotBytes:  screenshotBytes,
 		HeadlessBody:     headlessBody,
 		KnowledgeBase: map[string]interface{}{
-			"PageType": r.errorPageClassifier.Classify(respData),
+			"PageType": r.pageTypeClassifier.Classify(respData),
 			"pHash":    pHash,
 		},
 		TechnologyDetails: technologyDetails,
@@ -2223,6 +2288,9 @@ retry:
 	if resp.BodyDomains != nil {
 		result.Fqdns = resp.BodyDomains.Fqdns
 		result.Domains = resp.BodyDomains.Domains
+	}
+	if r.options.Trace {
+		result.Trace = req.TraceInfo
 	}
 	return result
 }
@@ -2257,11 +2325,11 @@ func calculatePerceptionHash(screenshotBytes []byte) (uint64, error) {
 	return pHash.GetHash(), nil
 }
 
-func (r *Runner) HandleFaviconHash(hp *httpx.HTTPX, req *retryablehttp.Request, currentResp []byte, defaultProbe bool) (string, string, []byte, string, error) {
+func (r *Runner) HandleFaviconHash(hp *httpx.HTTPX, req *retryablehttp.Request, currentResp []byte, defaultProbe bool) (string, string, string, []byte, string, error) {
 	// Check if current URI is ending with .ico => use current body without additional requests
 	if path.Ext(req.URL.Path) == ".ico" {
-		hash, err := r.calculateFaviconHashWithRaw(currentResp)
-		return hash, req.URL.Path, currentResp, "", err
+		MMH3Hash, MD5Hash, err := r.calculateFaviconHashWithRaw(currentResp)
+		return MMH3Hash, MD5Hash, req.URL.Path, currentResp, "", err
 	}
 
 	// search in the response of the requested path for element and rel shortcut/mask/apple-touch icon
@@ -2269,13 +2337,13 @@ func (r *Runner) HandleFaviconHash(hp *httpx.HTTPX, req *retryablehttp.Request, 
 	// if not, any of link from other icons can be requested
 	potentialURLs, err := extractPotentialFavIconsURLs(currentResp)
 	if err != nil {
-		return "", "", nil, "", err
+		return "", "", "", nil, "", err
 	}
 
 	clone := req.Clone(context.Background())
 
-	var faviconHash, faviconPath, faviconURL string
-	var faviconData []byte
+	var faviconMMH3, faviconMD5, faviconPath, faviconURL string
+	var faviconData, faviconDecodedData []byte
 	errCount := 0
 	if len(potentialURLs) == 0 && defaultProbe {
 		potentialURLs = append(potentialURLs, "/favicon.ico")
@@ -2286,48 +2354,65 @@ func (r *Runner) HandleFaviconHash(hp *httpx.HTTPX, req *retryablehttp.Request, 
 		if errCount == 2 {
 			break
 		}
-		URL, err := r.parseURL(potentialURL)
-		if err != nil {
-			continue
-		}
-		if URL.IsAbs() {
-			clone.SetURL(URL)
-			clone.Host = URL.Host
-			potentialURL = ""
-		} else {
-			potentialURL = URL.String()
+		URL, err := urlutil.ParseURL(potentialURL, r.options.Unsafe)
+
+		isFavUrl, isBase64FavIcon := err == nil, false
+		if !isFavUrl {
+			isBase64FavIcon = stringz.IsBase64Icon(potentialURL)
 		}
 
-		if potentialURL != "" {
-			err = clone.MergePath(potentialURL, false)
+		if !isFavUrl && !isBase64FavIcon {
+			continue
+		}
+
+		if isFavUrl {
+			if URL.IsAbs() {
+				clone.SetURL(URL)
+				clone.Host = URL.Host
+				potentialURL = ""
+			} else {
+				potentialURL = URL.String()
+			}
+
+			if potentialURL != "" {
+				err = clone.UpdateRelPath(potentialURL, false)
+				if err != nil {
+					continue
+				}
+			}
+			resp, err := hp.Do(clone, httpx.UnsafeOptions{})
 			if err != nil {
+				errCount++
+				continue
+			}
+			faviconDecodedData = resp.Data
+		}
+		// if the favicon is base64 encoded, decode before hashing
+		if isBase64FavIcon {
+			if faviconDecodedData, err = stringz.DecodeBase64Icon(potentialURL); err != nil {
 				continue
 			}
 		}
-		resp, err := hp.Do(clone, httpx.UnsafeOptions{})
-		if err != nil {
-			errCount++
-			continue
-		}
-		hash, err := r.calculateFaviconHashWithRaw(resp.Data)
+		MMH3Hash, MD5Hash, err := r.calculateFaviconHashWithRaw(faviconDecodedData)
 		if err != nil {
 			continue
 		}
 		faviconURL = clone.URL.String()
 		faviconPath = potentialURL
-		faviconHash = hash
-		faviconData = resp.Data
+		faviconMMH3 = MMH3Hash
+		faviconMD5 = MD5Hash
+		faviconData = faviconDecodedData
 		break
 	}
-	return faviconHash, faviconPath, faviconData, faviconURL, nil
+	return faviconMMH3, faviconMD5, faviconPath, faviconData, faviconURL, nil
 }
 
-func (r *Runner) calculateFaviconHashWithRaw(data []byte) (string, error) {
-	hashNum, err := stringz.FaviconHash(data)
+func (r *Runner) calculateFaviconHashWithRaw(data []byte) (string, string, error) {
+	hashNum, md5Hash, err := stringz.FaviconHash(data)
 	if err != nil {
-		return "", errorutil.NewWithTag("favicon", "could not calculate favicon hash").Wrap(err)
+		return "", "", errorutil.NewWithTag("favicon", "could not calculate favicon hash").Wrap(err)
 	}
-	return fmt.Sprintf("%d", hashNum), nil
+	return fmt.Sprintf("%d", hashNum), md5Hash, nil
 }
 
 func extractPotentialFavIconsURLs(resp []byte) ([]string, error) {
