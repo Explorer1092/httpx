@@ -52,6 +52,7 @@ require (
 
 require (
 	github.com/go-viper/mapstructure/v2 v2.1.0
+	github.com/projectdiscovery/httpx v1.6.9
 	github.com/weppos/publicsuffix-go v0.30.2
 )
 
@@ -120,7 +121,6 @@ require (
 	github.com/projectdiscovery/retryabledns v1.0.78 // indirect
 	github.com/refraction-networking/utls v1.6.7 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/rogpeppe/go-internal v1.12.0 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/sashabaranov/go-openai v1.15.3 // indirect
 	github.com/shirou/gopsutil/v3 v3.24.2 // indirect
@@ -162,3 +162,7 @@ require (
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+//replace (
+//	github.com/projectdiscovery/httpx v1.6.9 => github.com/Explorer1092/httpx v1.6.9-kn-202410311017
+//)

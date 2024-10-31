@@ -8,9 +8,9 @@ import (
 	"runtime"
 	"runtime/pprof"
 
+	"github.com/Explorer1092/httpx/internal/pdcp"
 	"github.com/logrusorgru/aurora"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/httpx/internal/pdcp"
 	"github.com/projectdiscovery/httpx/runner"
 	pdcpauth "github.com/projectdiscovery/utils/auth/pdcp"
 	_ "github.com/projectdiscovery/utils/pprof"
