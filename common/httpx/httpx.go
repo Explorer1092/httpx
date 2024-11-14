@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Explorer1092/cdncheck"
 	"github.com/microcosm-cc/bluemonday"
-	"github.com/projectdiscovery/cdncheck"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
 	"github.com/projectdiscovery/fastdialer/fastdialer/ja3/impersonate"
 	"github.com/projectdiscovery/httpx/common/httputilz"
@@ -77,14 +77,6 @@ func New(options *Options) (*HTTPX, error) {
 	retryablehttpOptions.Timeout = httpx.Options.Timeout
 	retryablehttpOptions.RetryMax = httpx.Options.RetryMax
 	retryablehttpOptions.Trace = options.Trace
-	handleHSTS := func(req *http.Request) {
-		if req.Response.Header.Get("Strict-Transport-Security") == "" {
-			return
-		}
-
-		req.URL.Scheme = "https"
-	}
-
 	handleHSTS := func(req *http.Request) {
 		if req.Response.Header.Get("Strict-Transport-Security") == "" {
 			return

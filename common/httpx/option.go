@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/projectdiscovery/cdncheck"
+	"github.com/Explorer1092/cdncheck"
 	"github.com/projectdiscovery/networkpolicy"
 )
 
