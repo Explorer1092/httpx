@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/Explorer1092/cdncheck"
+	"github.com/Explorer1092/httpx/common/httputilz"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
 	"github.com/projectdiscovery/fastdialer/fastdialer/ja3/impersonate"
-	"github.com/projectdiscovery/httpx/common/httputilz"
 	"github.com/projectdiscovery/networkpolicy"
 	"github.com/projectdiscovery/rawhttp"
 	retryablehttp "github.com/projectdiscovery/retryablehttp-go"

@@ -52,7 +52,6 @@ require (
 
 require (
 	github.com/go-viper/mapstructure/v2 v2.1.0
-	github.com/projectdiscovery/httpx v1.6.9
 	github.com/weppos/publicsuffix-go v0.30.2
 )
 
@@ -163,6 +162,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-//replace (
-//	github.com/projectdiscovery/httpx v1.6.9 => github.com/Explorer1092/httpx v1.6.9-kn-202410311017
-//)
+replace github.com/Explorer1092/httpx v1.6.9 => github.com/Explorer1092/httpx v1.6.9-kn-202410311017

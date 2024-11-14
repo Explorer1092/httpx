@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Explorer1092/httpx/runner"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/httpx/runner"
 	"github.com/projectdiscovery/retryablehttp-go"
 	pdcpauth "github.com/projectdiscovery/utils/auth/pdcp"
 	"github.com/projectdiscovery/utils/conversion"

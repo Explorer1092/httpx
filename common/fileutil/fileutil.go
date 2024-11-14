@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/projectdiscovery/httpx/common/stringz"
+	"github.com/Explorer1092/httpx/common/stringz"
 	fileutil "github.com/projectdiscovery/utils/file"
 )
 

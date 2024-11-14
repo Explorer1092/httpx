@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Explorer1092/httpx/common/httpx"
 	_ "github.com/projectdiscovery/fdmax/autofdmax"
-	"github.com/projectdiscovery/httpx/common/httpx"
 	"github.com/projectdiscovery/mapcidr/asn"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 	"github.com/stretchr/testify/require"

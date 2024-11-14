@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Explorer1092/httpx/runner"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
-	"github.com/projectdiscovery/httpx/runner"
 )
 
 func main() {

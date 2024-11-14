@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/projectdiscovery/httpx/internal/testutils"
-	"github.com/projectdiscovery/httpx/runner"
+	"github.com/Explorer1092/httpx/internal/testutils"
+	"github.com/Explorer1092/httpx/runner"
 )
 
 var libraryTestcases = map[string]testutils.TestCase{
@@ -45,7 +45,7 @@ func (h *httpxLibrary) Execute() error {
 
 	httpxRunner.RunEnumeration()
 
-	// httpx removes default ports for simplicity Ref: https://pkg.go.dev/github.com/projectdiscovery/httpx/common/stringz#RemoveURLDefaultPort
+	// httpx removes default ports for simplicity Ref: https://pkg.go.dev/github.com/Explorer1092/httpx/common/stringz#RemoveURLDefaultPort
 	expected := "https://scanme.sh"
 
 	if got != expected {
@@ -93,7 +93,7 @@ func (h *httpxLibraryWithStream) Execute() error {
 
 	httpxRunner.RunEnumeration()
 
-	// httpx removes default ports for simplicity Ref: https://pkg.go.dev/github.com/projectdiscovery/httpx/common/stringz#RemoveURLDefaultPort
+	// httpx removes default ports for simplicity Ref: https://pkg.go.dev/github.com/Explorer1092/httpx/common/stringz#RemoveURLDefaultPort
 	expected := "https://scanme.sh"
 
 	if got != expected {

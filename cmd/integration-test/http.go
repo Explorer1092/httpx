@@ -8,31 +8,31 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Explorer1092/httpx/internal/testutils"
 	"github.com/julienschmidt/httprouter"
-	"github.com/projectdiscovery/httpx/internal/testutils"
 	fileutil "github.com/projectdiscovery/utils/file"
 )
 
 var httpTestcases = map[string]testutils.TestCase{
-	"Standard HTTP GET Request":                                                           &standardHttpGet{},
-	"Standard HTTPS GET Request":                                                          &standardHttpGet{tls: true},
-	"Raw HTTP GET Request":                                                                &standardHttpGet{unsafe: true},
-	"Raw request with non standard rfc path via stdin":                                    &standardHttpGet{unsafe: true, stdinPath: "/%invalid"},
-	"Raw request with non standard rfc path via cli flag":                                 &standardHttpGet{unsafe: true, path: "/%invalid"},
-	"Regression test for: https://github.com/projectdiscovery/httpx/issues/363":           &issue363{},           // infinite redirect
-	"Regression test for: https://github.com/projectdiscovery/httpx/issues/276":           &issue276{},           // full path with port in output
-	"Regression test for: https://github.com/projectdiscovery/httpx/issues/277":           &issue277{},           // scheme://host:port via stdin
-	"Regression test for: https://github.com/projectdiscovery/httpx/issues/303":           &issue303{},           // misconfigured gzip header with uncompressed body
-	"Regression test for: https://github.com/projectdiscovery/httpx/issues/400":           &issue400{},           // post operation with body
-	"Regression test for: https://github.com/projectdiscovery/httpx/issues/414":           &issue414{},           // stream mode with path
-	"Regression test for unwanted chars":                                                  &titleUnwantedChars{}, // new line scanning with title flag, Regression test for: https://github.com/projectdiscovery/httpx/issues/433
-	"Request URI to existing file - https://github.com/projectdiscovery/httpx/issues/480": &issue480{},           // request uri pointing to existing file
-	"Standard HTTP GET Request with match response time":                                  &standardHttpGet{mrt: true, inputValue: "\"<10s\""},
-	"Standard HTTP GET Request with filter response time":                                 &standardHttpGet{frt: true, inputValue: "\">3ms\""},
-	"Multiple Custom Header":                                                              &customHeader{inputData: []string{"-debug-req", "-H", "'user-agent: test'", "-H", "'foo: bar'"}, expectedOutput: []string{"User-Agent: test", "Foo: bar"}},
-	"Output Match Condition":                                                              &outputMatchCondition{inputData: []string{"-silent", "-mdc", "\"status_code == 200\""}},
-	"Output Filter Condition":                                                             &outputFilterCondition{inputData: []string{"-silent", "-fdc", "\"status_code == 400\""}},
-	"Output All":                                                                          &outputAll{},
+	"Standard HTTP GET Request":                                                       &standardHttpGet{},
+	"Standard HTTPS GET Request":                                                      &standardHttpGet{tls: true},
+	"Raw HTTP GET Request":                                                            &standardHttpGet{unsafe: true},
+	"Raw request with non standard rfc path via stdin":                                &standardHttpGet{unsafe: true, stdinPath: "/%invalid"},
+	"Raw request with non standard rfc path via cli flag":                             &standardHttpGet{unsafe: true, path: "/%invalid"},
+	"Regression test for: https://github.com/Explorer1092/httpx/issues/363":           &issue363{},           // infinite redirect
+	"Regression test for: https://github.com/Explorer1092/httpx/issues/276":           &issue276{},           // full path with port in output
+	"Regression test for: https://github.com/Explorer1092/httpx/issues/277":           &issue277{},           // scheme://host:port via stdin
+	"Regression test for: https://github.com/Explorer1092/httpx/issues/303":           &issue303{},           // misconfigured gzip header with uncompressed body
+	"Regression test for: https://github.com/Explorer1092/httpx/issues/400":           &issue400{},           // post operation with body
+	"Regression test for: https://github.com/Explorer1092/httpx/issues/414":           &issue414{},           // stream mode with path
+	"Regression test for unwanted chars":                                              &titleUnwantedChars{}, // new line scanning with title flag, Regression test for: https://github.com/Explorer1092/httpx/issues/433
+	"Request URI to existing file - https://github.com/Explorer1092/httpx/issues/480": &issue480{},           // request uri pointing to existing file
+	"Standard HTTP GET Request with match response time":                              &standardHttpGet{mrt: true, inputValue: "\"<10s\""},
+	"Standard HTTP GET Request with filter response time":                             &standardHttpGet{frt: true, inputValue: "\">3ms\""},
+	"Multiple Custom Header":                                                          &customHeader{inputData: []string{"-debug-req", "-H", "'user-agent: test'", "-H", "'foo: bar'"}, expectedOutput: []string{"User-Agent: test", "Foo: bar"}},
+	"Output Match Condition":                                                          &outputMatchCondition{inputData: []string{"-silent", "-mdc", "\"status_code == 200\""}},
+	"Output Filter Condition":                                                         &outputFilterCondition{inputData: []string{"-silent", "-fdc", "\"status_code == 400\""}},
+	"Output All":                                                                      &outputAll{},
 }
 
 type standardHttpGet struct {

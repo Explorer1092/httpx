@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Explorer1092/httpx/internal/testutils"
 	"github.com/logrusorgru/aurora"
-	"github.com/projectdiscovery/httpx/internal/testutils"
 )
 
 var (
