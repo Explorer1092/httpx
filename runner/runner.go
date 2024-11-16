@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"image"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -1963,12 +1964,21 @@ retry:
 		// Print only the first CNAME (full list in json)
 		builder.WriteString(fmt.Sprintf(" [%s]", cnames[0]))
 	}
+	var isCDN bool
+	var cdnName, cdnType string
 
-	isCDN, cdnName, cdnType, err := hp.CdnCheck(ip)
-	if scanopts.OutputCDN == "true" && isCDN && err == nil {
-		builder.WriteString(fmt.Sprintf(" [%s]", cdnName))
+	if onlyHost != "" {
+		isCDN, cdnName, cdnType, err = hp.CdnCheckDomain(onlyHost)
+		if scanopts.OutputCDN == "true" && isCDN && err == nil {
+			builder.WriteString(fmt.Sprintf(" [%s:%s]", cdnType, cdnName))
+		}
+	} else {
+		isCDN, cdnName, cdnType, err = hp.CdnCheck(ip)
+		if scanopts.OutputCDN == "true" && isCDN && err == nil {
+			builder.WriteString(fmt.Sprintf(" [%s:%s]", cdnType, cdnName))
+		}
 	}
-
+	log.Println("CDN", isCDN, cdnName, cdnType, err)
 	if scanopts.OutputResponseTime {
 		builder.WriteString(fmt.Sprintf(" [%s]", resp.Duration))
 	}
@@ -2531,7 +2541,13 @@ func (r *Runner) skipCDNPort(host string, port string) bool {
 	// pick the first ip as target
 	hostIP := dnsData.A[0]
 
-	isCdnIP, _, _, err := r.hp.CdnCheck(hostIP)
+	isCdnIP, _, _, err := r.hp.CdnCheckDomain(host)
+	if err != nil {
+		return false
+	}
+
+	isCdnIP, _, _, err = r.hp.CdnCheck(hostIP)
+
 	if err != nil {
 		return false
 	}

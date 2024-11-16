@@ -29,6 +29,7 @@ func (h *HTTPX) CdnCheckDomain(domain string) (bool, string, string, error) {
 	// the goal is to check if ip is part of cdn/waf to decide if target should be scanned or not
 	// since 'cloud' itemtype does not fit logic here , we consider target is not part of cdn/waf
 	matched, value, itemType, err := h.cdn.CheckDomainWithFallback(domain)
+
 	if itemType == "cloud" {
 		return false, value, itemType, err
 	}
