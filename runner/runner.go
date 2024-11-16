@@ -10,7 +10,6 @@ import (
 	"html/template"
 	"image"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -1978,7 +1977,7 @@ retry:
 			builder.WriteString(fmt.Sprintf(" [%s:%s]", cdnType, cdnName))
 		}
 	}
-	log.Println("CDN", isCDN, cdnName, cdnType, err)
+
 	if scanopts.OutputResponseTime {
 		builder.WriteString(fmt.Sprintf(" [%s]", resp.Duration))
 	}
