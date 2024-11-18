@@ -7,6 +7,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"github.com/projectdiscovery/fastdialer/fastdialer"
 	"html/template"
 	"image"
 	"io"
@@ -35,7 +36,7 @@ import (
 	"github.com/corona10/goimagehash"
 	"github.com/mfonda/simhash"
 	asnmap "github.com/projectdiscovery/asnmap/libs"
-	"github.com/projectdiscovery/fastdialer/fastdialer"
+
 	"github.com/projectdiscovery/mapcidr/asn"
 	"github.com/projectdiscovery/networkpolicy"
 	errorutil "github.com/projectdiscovery/utils/errors"
