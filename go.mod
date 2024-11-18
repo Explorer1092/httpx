@@ -1,6 +1,8 @@
 module github.com/Explorer1092/httpx
 
-go 1.21
+go 1.22
+
+toolchain go1.22.9
 
 require (
 	github.com/Explorer1092/cdncheck v1.1.0-20241115

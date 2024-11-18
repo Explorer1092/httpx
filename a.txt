@@ -1,0 +1,2 @@
+8.219.49.206,http://test.ai2me.io/
+test.ai2me.io,http://8.219.49.206/

@@ -1507,8 +1507,38 @@ func (r *Runner) targets(hp *httpx.HTTPX, target string) chan httpx.Target {
 				results <- httpx.Target{Host: target, CustomIP: ip}
 			}
 		case !stringsutil.HasPrefixAny(target, "http://", "https://") && stringsutil.ContainsAny(target, ","):
-			idxComma := strings.Index(target, ",")
-			results <- httpx.Target{Host: target[idxComma+1:], CustomHost: target[:idxComma]}
+			parts := strings.Split(target, ",")
+
+			switch len(parts) {
+			case 2:
+				// 处理两列的情况
+				firstPart := parts[0]
+				host := parts[1]
+
+				// 如果第二部分是 IP 地址
+				if iputil.IsIP(firstPart) {
+					results <- httpx.Target{Host: host, CustomIP: firstPart}
+				} else {
+					// 如果第二部分不是 IP 地址,则按原来的逻辑处理
+					results <- httpx.Target{Host: host, CustomHost: firstPart}
+				}
+
+			case 3:
+				// 处理三列的情况: CustomIP,CustomHost,Host
+				customIP := strings.TrimSpace(parts[0])
+				customHost := strings.TrimSpace(parts[1])
+				host := strings.TrimSpace(parts[2])
+
+				results <- httpx.Target{
+					CustomIP:   customIP,
+					CustomHost: customHost,
+					Host:       host,
+				}
+
+			default:
+				// 如果列数不是2或3,则将整个字符串作为Host处理
+				results <- httpx.Target{Host: target}
+			}
 		default:
 			results <- httpx.Target{Host: target}
 		}
