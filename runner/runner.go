@@ -1995,7 +1995,18 @@ retry:
 		builder.WriteString(fmt.Sprintf(" [%s]", cnames[0]))
 	}
 
-	isCDN, cdnName, cdnType, err := hp.CdnCheck(ip)
+	var (
+		isCDN   bool
+		cdnName string
+		cdnType string
+	)
+
+	isCDN, cdnName, cdnType, err = hp.CdnCheckDomain(onlyHost)
+
+	if !isCDN {
+		isCDN, cdnName, cdnType, err = hp.CdnCheck(ip)
+	}
+
 	if scanopts.OutputCDN == "true" && isCDN && err == nil {
 		builder.WriteString(fmt.Sprintf(" [%s]", cdnName))
 	}
